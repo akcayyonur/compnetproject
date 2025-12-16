@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
-# tcp_game_final_v5.py
+# tcp_game_final_v6.py
 #
-# TCP Game - Final "Go-Back-N Sync" Version
+# TCP Game - Final Clean UI Version (v6)
 #
-# FIXES:
-# 1. GBN Retransmission Recognition:
-#    - If incoming Seq != Expected BUT Incoming Seq == My Last Sent ACK,
-#      it is treated as a VALID retransmission (not an error).
-#    - This allows 'Simulated Packet Loss' without breaking game logic.
+# UI CHANGE:
+# - Removed "suggested values" (e.g., [seq: 10]) from inputs.
+# - User MUST manually type all values now.
 #
-# 2. Logic & Scoring:
-#    - Hybrid Scoring (-1 for rwnd=0 violations, +1 for others).
-#    - Rollback mechanism active.
-#    - No "length > rwnd" restriction.
+# CORE LOGIC (Same as v5):
+# - GBN Retransmission Recognition (Retransmissions are VALID).
+# - Hybrid Scoring (-1 for rwnd=0 violations, +1 for others).
+# - Rollback mechanism active.
+# - No "length > rwnd" restriction.
 #
 
 import argparse
@@ -234,10 +233,9 @@ class GameState:
 
         # --- SEQ CHECK WITH GBN SUPPORT ---
         if pkt.seq != expected:
-            # FIX: If the incoming seq matches what we ASKED for (my_last_ack_sent),
-            # it is a VALID retransmission, even if our internal 'expected' is higher.
+            # FIX: If incoming seq matches what we ASKED for (my_last_ack_sent),
+            # it is a VALID retransmission.
             if pkt.seq == last_ack_sent:
-                 # This is a valid GBN retransmission!
                  pass 
             else:
                  return False, f"Invalid seq: expected {expected}, got {pkt.seq}"
@@ -258,8 +256,7 @@ class GameState:
         if pkt.ptype != "DATA":
             return
         with self.lock:
-            # FIX: If we accept a retransmission (Seq < Expected), we must RESET our expectation
-            # to match the retransmission flow.
+            # FIX: GBN Resync
             if pkt.seq != self.expected_peer_seq and pkt.seq == self.my_last_ack_sent:
                 print(f"   >>> [SYNC] GBN Retransmission accepted. Resyncing sequence.")
                 self.expected_peer_seq = pkt.seq
@@ -309,11 +306,7 @@ def recv_packet(sock: socket.socket) -> Optional[Packet]:
 # Main game loop
 # -----------------------------
 def interactive_turn_input(state: GameState) -> Packet:
-    with state.lock:
-        suggested_seq = state.my_next_seq
-        suggested_ack = state.expected_peer_seq
-        suggested_rwnd = state.my_rwnd
-
+    # We no longer show suggestions in the prompt.
     print("\n--- YOUR TURN ---")
     print("Type one of: data, error, show, quit")
     while True:
@@ -332,27 +325,29 @@ def interactive_turn_input(state: GameState) -> Packet:
             break
         print("Unknown/Invalid. Try 'data'.")
 
-    def ask_int(prompt: str, default: int) -> int:
+    # Modified ask_int: No default value shown or accepted. Must type.
+    def ask_int(prompt: str) -> int:
         while True:
-            s = input(f"{prompt} [{default}]: ").strip()
+            s = input(f"{prompt}: ").strip()
             if s == "":
-                return default
+                print("Please enter a number.")
+                continue
             try:
                 return int(s)
             except ValueError:
                 print("Enter an integer.")
 
-    seq = ask_int("seq", suggested_seq)
-    ack = ask_int("ack", suggested_ack)
-    rwnd = ask_int("rwnd", suggested_rwnd)
-    length = ask_int("length", 1)
+    seq = ask_int("seq")
+    ack = ask_int("ack")
+    rwnd = ask_int("rwnd")
+    length = ask_int("length")
     note = input("note (optional): ").strip()
     
     return Packet(ptype="DATA", seq=seq, ack=ack, rwnd=rwnd, length=length, note=note, ts=time.monotonic())
 
 
 def maybe_double_ack_hint(state: GameState) -> Optional[str]:
-    # Only trigger if we have received at least 3 identical ACKs in a row
+    # Trigger only if 3 identical ACKs in a row
     with state.lock:
         acks = list(state.last_acks_received)
     
